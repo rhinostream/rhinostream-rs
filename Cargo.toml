@@ -1,8 +1,23 @@
 [package]
-name = "rhinostream-rs"
+name = "rhinostream"
 version = "0.1.0"
 edition = "2021"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
+[lib]
+name = "rhinostream"
+
 [dependencies]
+win_desktop_duplication = "0.10.4"
+dxfilter = "0.5.11"
+futures = "0.3.21"
+log = "0.4.17"
+tokio = { version = "1.20.1", features = ["rt", "sync", "rt-multi-thread"] }
+clap = { version = "3.2.16", features = ['derive'] }
+windows = { version = "0.39.0", features = [
+    "Win32_Graphics_Direct3D11"
+] }
+
+[dev-dependencies]
+env_logger = "0.9.0"
