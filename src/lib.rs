@@ -28,14 +28,14 @@ pub struct RhinoClient {
 
 pub struct Frame {
     pub data: FrameType,
-    pub start_time: time::Instant,
+    pub start_time: Instant,
 }
 
 impl Frame {
     fn new(data: FrameType) -> Self {
         Self {
             data,
-            start_time: time::Instant::now(),
+            start_time: Instant::now(),
         }
     }
     fn new_from(frame: &Frame, data: FrameType) -> Self {
@@ -141,7 +141,7 @@ pub trait Filter: Config + Unpin + Send + 'static {
 }
 
 pub trait Processor: Signal + Config + Unpin + Send + 'static {
-    type Future: Future<Output=Result<(Packet   )>> + Send + 'static;
+    type Future: Future<Output=Result<Packet>> + Send + 'static;
     fn get_queue(&mut self) -> Sender<Frame>;
 
     fn get_packet(&mut self, packet: Packet) -> Self::Future;

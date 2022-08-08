@@ -13,8 +13,11 @@ use win_desktop_duplication::tex_reader::TextureReader;
 use crate::{Config, Context, Frame, Packet, Processor, RhinoError, Result, Signal, FrameType, PacketKind};
 use crate::stream::DDA_ERR_MAP;
 
+#[cfg(feature = "nvenc")]
+mod nvenc;
+
 pub struct CopyTexToCPU {
-    tx: Sender<Frame>,
+    tx: Option<Sender<Frame>>,
     rx: Arc<Mutex<Receiver<Frame>>>,
     reader: Arc<Mutex<TextureReader>>,
 }
@@ -31,7 +34,7 @@ impl CopyTexToCPU {
             }
         }?;
         Ok(Self {
-            tx,
+            tx: Some(tx),
             rx: Arc::new(Mutex::new(rx)),
             reader: Arc::new(Mutex::new(reader)),
         })
@@ -87,7 +90,9 @@ impl Processor for CopyTexToCPU {
     type Future = Pin<Box<dyn Future<Output=Result<(Packet)>> + Send>>;
 
     fn get_queue(&mut self) -> Sender<Frame> {
-        return self.tx.clone();
+        let mut tx = None;
+        swap(&mut tx, &mut self.tx);
+        return tx.unwrap();
     }
 
     fn get_packet(&mut self, packet: Packet) -> Self::Future {
