@@ -1,3 +1,5 @@
+extern crate core;
+
 use std::fmt::Debug;
 use std::future::Future;
 use std::pin::Pin;
@@ -142,7 +144,7 @@ pub trait Filter: Config + Unpin + Send + 'static {
 
 pub trait Processor: Signal + Config + Unpin + Send + 'static {
     type Future: Future<Output=Result<Packet>> + Send + 'static;
-    fn get_queue(&mut self) -> Sender<Frame>;
+    fn get_queue(&mut self) -> Result<Sender<Frame>>;
 
     fn get_packet(&mut self, packet: Packet) -> Self::Future;
 }

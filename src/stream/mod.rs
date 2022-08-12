@@ -76,7 +76,7 @@ pub struct RhinoStream {
 }
 
 impl RhinoStream {
-    pub fn new(rt: Runtime, mut source: impl Source, mut filter: impl Filter, mut processor: impl Processor) -> Result<Self> {
+    pub fn new(rt: Runtime, mut source: impl Source, mut filter: impl Filter, processor: impl Processor) -> Result<Self> {
         let (put_back, packet_rx) = Self::start_stream(&rt, source, filter, processor)?;
         Ok(Self {
             rt,
@@ -85,7 +85,7 @@ impl RhinoStream {
         })
     }
     fn start_stream(rt: &Runtime, mut source: impl Source, mut filter: impl Filter, mut processor: impl Processor) -> Result<(Sender<Packet>, Receiver<Result<Packet>>)> {
-        let processor_queue = processor.get_queue();
+        let processor_queue = processor.get_queue()?;
         let pool = Arc::new(Mutex::new(VecDeque::new()));
         trace!("stream start!");
         rt.spawn(async move {
@@ -142,10 +142,13 @@ impl RhinoStream {
                     let mut locked_pool = pool.lock().await;
                     locked_pool.pop_front().unwrap_or_else(|| Packet::new())
                 };
-                let result = processor.get_packet(packet).await;
+                let fut = processor.get_packet(packet);
+                let result = fut.await;
+                trace!("sent a packet");
                 if packet_tx.send(result).await.is_err() {
                     break;
                 };
+                trace!("sent a packet")
             }
         });
 

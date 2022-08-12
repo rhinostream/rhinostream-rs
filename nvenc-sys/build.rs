@@ -13,6 +13,7 @@ fn main() {
         .allowlist_type(".*NV.*")
         .allowlist_var(".*NV.*")
         .allowlist_function(".*Nv.*")
+        .blocklist_item(".*NV.*_GUID")
         .generate().expect("failed to generate bindings");
     write_bindings(bindings, "nvenc.rs");
 }

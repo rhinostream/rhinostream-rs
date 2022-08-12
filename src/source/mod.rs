@@ -68,7 +68,7 @@ impl FromStr for ScreenCapConfig {
     type Err = String;
 
     fn from_str(s: &str) -> std::result::Result<Self, Self::Err> {
-        let result = Self::try_parse_from(s.split(" "));
+        let result = Self::try_parse_from(s.split(" ").filter(|x| { (*x).trim().len() != 0 }));
         return match result {
             Err(e) => {
                 Err(format!("{:?}", e).to_owned())

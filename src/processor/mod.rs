@@ -1,7 +1,9 @@
+use std::borrow::BorrowMut;
 use std::collections::VecDeque;
 use std::future::Future;
 use std::mem::swap;
 use std::pin::Pin;
+use std::ptr::null;
 use std::str::FromStr;
 use std::sync::Arc;
 use std::task::Poll;
@@ -10,6 +12,9 @@ use log::error;
 use tokio::sync::mpsc::{channel, Receiver, Sender};
 use tokio::sync::Mutex;
 use win_desktop_duplication::tex_reader::TextureReader;
+use win_desktop_duplication::texture::{Texture, TextureDesc};
+use windows::Win32::Graphics::Direct3D11::{D3D11_BIND_RENDER_TARGET, D3D11_TEXTURE2D_DESC, ID3D11Device4};
+use windows::Win32::Graphics::Dxgi::Common::DXGI_SAMPLE_DESC;
 use crate::{Config, Context, Frame, Packet, Processor, RhinoError, Result, Signal, FrameType, PacketKind};
 use crate::stream::DDA_ERR_MAP;
 
@@ -61,7 +66,7 @@ impl CopyTexToCPU {
 
 
 impl Signal for CopyTexToCPU {
-    fn signal(&mut self, flags: u32) -> crate::errors::RhinoResult<()> {
+    fn signal(&mut self, _flags: u32) -> crate::errors::RhinoResult<()> {
         unimplemented!()
     }
 }
@@ -69,7 +74,7 @@ impl Signal for CopyTexToCPU {
 impl Config for CopyTexToCPU {
     type ConfigType = DummyConfig;
 
-    fn configure(&mut self, c: Self::ConfigType) -> crate::errors::RhinoResult<()> {
+    fn configure(&mut self, _c: Self::ConfigType) -> crate::errors::RhinoResult<()> {
         unimplemented!()
     }
 }
@@ -87,15 +92,21 @@ impl FromStr for DummyConfig {
 impl Unpin for CopyTexToCPU {}
 
 impl Processor for CopyTexToCPU {
-    type Future = Pin<Box<dyn Future<Output=Result<(Packet)>> + Send>>;
+    type Future = Pin<Box<dyn Future<Output=Result<Packet>> + Send>>;
 
-    fn get_queue(&mut self) -> Sender<Frame> {
+    fn get_queue(&mut self) -> Result<Sender<Frame>> {
         let mut tx = None;
         swap(&mut tx, &mut self.tx);
-        return tx.unwrap();
+
+        if tx.is_none() {
+            Err(RhinoError::Recoverable("get_queue can only be run once".to_owned()))
+        } else {
+            Ok(tx.unwrap())
+        }
     }
 
     fn get_packet(&mut self, packet: Packet) -> Self::Future {
         Box::pin(Self::get_next(self.rx.clone(), self.reader.clone(), packet))
     }
 }
+

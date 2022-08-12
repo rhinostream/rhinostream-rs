@@ -16,7 +16,10 @@ log = "0.4.17"
 tokio = { version = "1.20.1", features = ["rt", "sync", "rt-multi-thread"] }
 clap = { version = "3.2.16", features = ['derive'] }
 windows = { version = "0.39.0", features = [
-    "Win32_Graphics_Direct3D11"
+    "Win32_Graphics_Direct3D11",
+    "Win32_System_Threading",
+    "Win32_Foundation",
+    "Win32_Security"
 ] }
 nvenc-sys = { path = "nvenc-sys", optional = true }
 
@@ -29,5 +32,6 @@ members = [
 ]
 
 [features]
+default = ["nvenc"]
 nvenc = ["dep:nvenc-sys"]
 
