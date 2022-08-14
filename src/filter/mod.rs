@@ -1,6 +1,6 @@
 use std::ptr::null;
 use std::str::FromStr;
-use dxfilter::{ConvertARGBToNV12, DxFilter};
+use dxfilter::{ConvertARGBToAYUV, ConvertARGBToNV12, DxFilter, ScaleARGBOrAYUV};
 use log::error;
 use win_desktop_duplication::texture::{ColorFormat, Texture};
 use windows::Win32::Graphics::Direct3D11::{D3D11_BIND_FLAG, D3D11_BIND_RENDER_TARGET, D3D11_BIND_SHADER_RESOURCE, D3D11_TEXTURE2D_DESC, D3D11_USAGE_DEFAULT, ID3D11Device4, ID3D11DeviceContext4};
@@ -88,6 +88,60 @@ pub fn new_nv12_filter(conf: DxColorConfig, ctx: &mut Context) -> Result<DxColor
     Ok(DxColor {
         config: conf,
         filter: ConvertARGBToNV12::new(&input, &output_tex, &device).map_err(DXF_ERR_MAP)?,
+        input_tex: input,
+        output_tex,
+        device,
+        ctx: dev_ctx,
+        out_format: ColorFormat::NV12,
+    })
+}
+
+pub fn new_argb_filter(conf: DxColorConfig, ctx: &mut Context) -> Result<DxColor<ScaleARGBOrAYUV>> {
+    if !matches!(ctx,Context::DxContext(_)) {
+        error!("context provided was not directx context");
+        return Err(RhinoError::UnSupported);
+    }
+    let (device, dev_ctx) = match ctx {
+        Context::DxContext(c) => {
+            Ok((c.device.clone(), c.ctx.clone()))
+        }
+        _ => {
+            error!("expected directx context got `{:?}`",ctx);
+            Err(RhinoError::UnSupported)
+        }
+    }?;
+    let input = create_texture(&device, ColorFormat::ARGB8UNorm.into(), &conf, D3D11_BIND_SHADER_RESOURCE)?;
+    let output_tex = create_texture(&device, ColorFormat::ARGB8UNorm.into(), &conf, D3D11_BIND_RENDER_TARGET)?;
+    Ok(DxColor {
+        config: conf,
+        filter: ScaleARGBOrAYUV::new(&input, &output_tex, &device).map_err(DXF_ERR_MAP)?,
+        input_tex: input,
+        output_tex,
+        device,
+        ctx: dev_ctx,
+        out_format: ColorFormat::NV12,
+    })
+}
+
+pub fn new_ayuv_filter(conf: DxColorConfig, ctx: &mut Context) -> Result<DxColor<ConvertARGBToAYUV>> {
+    if !matches!(ctx,Context::DxContext(_)) {
+        error!("context provided was not directx context");
+        return Err(RhinoError::UnSupported);
+    }
+    let (device, dev_ctx) = match ctx {
+        Context::DxContext(c) => {
+            Ok((c.device.clone(), c.ctx.clone()))
+        }
+        _ => {
+            error!("expected directx context got `{:?}`",ctx);
+            Err(RhinoError::UnSupported)
+        }
+    }?;
+    let input = create_texture(&device, ColorFormat::ARGB8UNorm.into(), &conf, D3D11_BIND_SHADER_RESOURCE)?;
+    let output_tex = create_texture(&device, ColorFormat::AYUV.into(), &conf, D3D11_BIND_RENDER_TARGET)?;
+    Ok(DxColor {
+        config: conf,
+        filter: ConvertARGBToAYUV::new(&input, &output_tex, &device).map_err(DXF_ERR_MAP)?,
         input_tex: input,
         output_tex,
         device,

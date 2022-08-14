@@ -19,7 +19,7 @@ use crate::{Config, Context, Frame, Packet, Processor, RhinoError, Result, Signa
 use crate::stream::DDA_ERR_MAP;
 
 #[cfg(feature = "nvenc")]
-mod nvenc;
+pub mod nvenc;
 
 pub struct CopyTexToCPU {
     tx: Option<Sender<Frame>>,

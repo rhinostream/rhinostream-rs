@@ -1,6 +1,6 @@
 [package]
 name = "rhinostream"
-version = "0.1.0"
+version = "0.0.1"
 edition = "2021"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
@@ -9,7 +9,7 @@ edition = "2021"
 name = "rhinostream"
 
 [dependencies]
-win_desktop_duplication = "0.10.4"
+win_desktop_duplication = "0.10.6"
 dxfilter = "0.5.11"
 futures = "0.3.21"
 log = "0.4.17"

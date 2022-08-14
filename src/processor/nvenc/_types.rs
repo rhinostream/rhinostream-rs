@@ -27,8 +27,8 @@ pub struct NvencConfig {
     #[clap(short = 'c', long, value_enum, default_value = "h264")]
     pub codec: NvencCodec,
 
-    #[clap(long, value_parser, default_value_t = false)]
-    pub disable_aq: bool,
+    #[clap(long, value_parser, default_value = "disabled")]
+    pub aq: AdaptiveQuantization,
 
     #[clap(short = 'r', long, value_parser = Resolution::from_str, default_value = "0x0")]
     pub resolution: Resolution,
@@ -52,6 +52,14 @@ impl FromStr for NvencConfig {
             Ok(parsed) => { Ok(parsed) }
         };
     }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, ValueEnum)]
+#[clap(rename_all = "snake_case")]
+pub enum AdaptiveQuantization {
+    Disabled,
+    Spacial,
+    Temporal,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, ValueEnum)]
@@ -126,18 +134,18 @@ impl Into<nvenc::NV_ENC_BUFFER_FORMAT> for NvencColor {
 impl From<ColorFormat> for NvencColor {
     fn from(f: ColorFormat) -> Self {
         match f {
-            ColorFormat::Unknown => {NvencColor::ARGB}
-            ColorFormat::ARGB8UNorm => {NvencColor::ARGB}
-            ColorFormat::ABGR8UNorm => {NvencColor::ABGR}
-            ColorFormat::YUV444 => {NvencColor::YUV444}
-            ColorFormat::AYUV => {NvencColor::AYUV}
-            ColorFormat::YUV420 => {NvencColor::YUV420}
-            ColorFormat::NV12 => {NvencColor::NV12}
-            ColorFormat::ARGB16Float => {NvencColor::ARGB_10bit}
-            ColorFormat::ARGB10UNorm => {NvencColor::ARGB_10bit}
-            ColorFormat::Y410 => {unimplemented!()}
-            ColorFormat::YUV444_10bit => {NvencColor::YUV444_10bit}
-            ColorFormat::YUV420_10bit => {NvencColor::YUV420_10bit}
+            ColorFormat::Unknown => { NvencColor::ARGB }
+            ColorFormat::ARGB8UNorm => { NvencColor::ARGB }
+            ColorFormat::ABGR8UNorm => { NvencColor::ABGR }
+            ColorFormat::YUV444 => { NvencColor::YUV444 }
+            ColorFormat::AYUV => { NvencColor::AYUV }
+            ColorFormat::YUV420 => { NvencColor::YUV420 }
+            ColorFormat::NV12 => { NvencColor::NV12 }
+            ColorFormat::ARGB16Float => { NvencColor::ARGB_10bit }
+            ColorFormat::ARGB10UNorm => { NvencColor::ARGB_10bit }
+            ColorFormat::Y410 => { unimplemented!() }
+            ColorFormat::YUV444_10bit => { NvencColor::YUV444_10bit }
+            ColorFormat::YUV420_10bit => { NvencColor::YUV420_10bit }
         }
     }
 }

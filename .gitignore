@@ -2,3 +2,4 @@
 /Cargo.lock
 /.idea
 nvenc-sys/Cargo.lock
+video.hevc

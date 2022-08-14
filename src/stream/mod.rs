@@ -26,9 +26,8 @@ mod test {
         let src = ScreenCap::new("--screen 0".parse().unwrap(), &mut ctx).unwrap();
         let filter = new_nv12_filter("-r 1920x1080".parse().unwrap(), &mut ctx).unwrap();
         let processor = CopyTexToCPU::new(&mut ctx).unwrap();
-        let rt = Builder::new_multi_thread().worker_threads(1).thread_name("Graphics").build().unwrap();
 
-        let mut stream = RhinoStream::new(rt, src, filter, processor).unwrap();
+        let mut stream = RhinoStream::new( src, filter, processor).unwrap();
         let mut packet = Packet::new();
         for i in 0..1000 {
             stream.get_next_frame(&mut packet).unwrap();
@@ -43,11 +42,11 @@ use std::sync::Arc;
 use dxfilter::error::DxFilterErr;
 use futures::StreamExt;
 use log::{error, info, trace, warn};
-use tokio::runtime::Runtime;
+use tokio::runtime::{Builder, Runtime};
 use tokio::sync::mpsc::{channel, Receiver, Sender};
 use tokio::sync::Mutex;
 use win_desktop_duplication::errors::DDApiError;
-use crate::{Filter, Processor, RhinoError, Source, Result, Packet};
+use crate::{Filter, Processor, RhinoError, Source, Result, Packet, Config};
 
 pub(crate) const DDA_ERR_MAP: fn(e: DDApiError) -> RhinoError = |e| {
     match e {
@@ -69,29 +68,54 @@ pub(crate) const WIN_ERR_MAP: fn(e: windows::core::Error) -> RhinoError = |e| {
     RhinoError::UnRecoverable(format!("{:?}", e))
 };
 
-pub struct RhinoStream {
+pub struct RhinoStream<T: Source, U: Filter, V: Processor> {
     rt: Runtime,
     put_back: Sender<Packet>,
     packet_rx: Receiver<Result<Packet>>,
+
+    source_config_tx: Sender<T::ConfigType>,
+    filter_config_tx: Sender<U::ConfigType>,
+    processor_config_tx: Sender<V::ConfigType>,
 }
 
-impl RhinoStream {
-    pub fn new(rt: Runtime, mut source: impl Source, mut filter: impl Filter, processor: impl Processor) -> Result<Self> {
-        let (put_back, packet_rx) = Self::start_stream(&rt, source, filter, processor)?;
+impl<T: Source, U: Filter, V: Processor> RhinoStream<T, U, V> {
+    pub fn new(mut source: T, mut filter: U, processor: V) -> Result<Self> {
+        let rt = Builder::new_multi_thread().worker_threads(1).thread_name("Graphics").build().unwrap();
+
+        let (sc_tx, sc_rx) = channel(2);
+        let (fc_tx, fc_rx) = channel(2);
+        let (pc_tx, pc_rx) = channel(2);
+        let (put_back, packet_rx) = Self::start_stream(
+            &rt, source, filter, processor, sc_rx, fc_rx, pc_rx,
+        )?;
         Ok(Self {
             rt,
             put_back,
             packet_rx,
+
+            source_config_tx: sc_tx,
+            filter_config_tx: fc_tx,
+            processor_config_tx: pc_tx,
         })
     }
-    fn start_stream(rt: &Runtime, mut source: impl Source, mut filter: impl Filter, mut processor: impl Processor) -> Result<(Sender<Packet>, Receiver<Result<Packet>>)> {
+    fn start_stream(
+        rt: &Runtime,
+        mut source: T,
+        mut filter: U,
+        mut processor: V,
+        sc_rx: Receiver<T::ConfigType>,
+        fc_rx: Receiver<U::ConfigType>,
+        pc_rx: Receiver<V::ConfigType>,
+    ) -> Result<(Sender<Packet>, Receiver<Result<Packet>>)> {
         let processor_queue = processor.get_queue()?;
         let pool = Arc::new(Mutex::new(VecDeque::new()));
         trace!("stream start!");
-        rt.spawn(async move {
+        rt. spawn(async move {
             let mut src = source;
             let mut filter = filter;
             let mut processor_queue = processor_queue;
+            let mut sc_rx = sc_rx;
+            let mut fc_rx = fc_rx;
             while let Some(result) = src.next().await {
                 trace!("new source!");
                 if result.is_err() {
@@ -103,7 +127,6 @@ impl RhinoStream {
                         }
                         _ => {
                             error!("Stream source threw unrecoverable error. {:?}",e);
-
                             break;
                         }
                     }
@@ -126,8 +149,11 @@ impl RhinoStream {
                 let frame = result.unwrap();
                 if let Err(_) = processor_queue.send(frame).await {
                     info!("exiting stream loop because processor queue quit");
-                    return;
+                    break;
                 };
+
+                Self::try_configure(&mut src, &mut sc_rx);
+                Self::try_configure(&mut filter, &mut fc_rx);
             }
             info!("exiting stream loop!")
         });
@@ -137,6 +163,7 @@ impl RhinoStream {
         rt.spawn(async move {
             let pool = pool_1;
             let mut processor = processor;
+            let mut pc_rx = pc_rx;
             loop {
                 let mut packet = {
                     let mut locked_pool = pool.lock().await;
@@ -148,7 +175,8 @@ impl RhinoStream {
                 if packet_tx.send(result).await.is_err() {
                     break;
                 };
-                trace!("sent a packet")
+                trace!("sent a packet");
+                Self::try_configure(&mut processor, &mut pc_rx);
             }
         });
 
@@ -168,7 +196,14 @@ impl RhinoStream {
         );
         Ok((pb_tx, packet_rx))
     }
-
+    fn try_configure<X:Config>(function: &mut X, conf_chan: &mut Receiver<X::ConfigType>) {
+        if let Ok(conf) = conf_chan.try_recv() {
+            let err = function.configure(conf);
+            if let Err(e) = err {
+                error!("failed to configure {:?}",e);
+            }
+        }
+    }
     pub fn get_next_frame(&mut self, packet: &mut Packet) -> Result<()> {
         if let Some(new_packet) = self.packet_rx.blocking_recv() {
             let mut new_packet = new_packet?;

@@ -6,12 +6,12 @@ mod test {
     use log::LevelFilter::{Debug};
     use tokio::runtime::{Builder, Runtime};
     use crate::{Context, Packet};
-    use crate::filter::new_nv12_filter;
+    use crate::filter::{new_argb_filter, new_ayuv_filter, new_nv12_filter};
     use crate::processor::CopyTexToCPU;
     use crate::source::ScreenCap;
     use crate::stream::RhinoStream;
     use clap::ValueEnum;
-    use crate::processor::nvenc::{MultiPass, NvEnc, NvencCodec, NvencColor, NvencConfig, Preset, Profile, TuningInfo};
+    use crate::processor::nvenc::{AdaptiveQuantization, MultiPass, NvEnc, NvencCodec, NvencColor, NvencConfig, Preset, Profile, TuningInfo};
     use crate::Resolution;
 
 
@@ -28,13 +28,12 @@ mod test {
         initialize();
         let mut ctx = Context::None;
         let src = ScreenCap::new("--screen 0".parse().unwrap(), &mut ctx).unwrap();
-        let filter = new_nv12_filter("-r 1920x1080".parse().unwrap(), &mut ctx).unwrap();
+        let filter = new_ayuv_filter("-r 1920x1080".parse().unwrap(), &mut ctx).unwrap();
         let config: NvencConfig = "-p p1 --profile auto --multi-pass quarter_res -t \
-        ultra_low_latency -r 1920x1080 --codec hevc --color nv12 -b 10000000 -f 144".parse().unwrap();
+        ultra_low_latency -r 1920x1080 --codec hevc --color argb -b 10000000 -f 144".parse().unwrap();
         let processor = NvEnc::new(&mut ctx, &config).unwrap();
-        let rt = Builder::new_multi_thread().worker_threads(1).thread_name("Graphics").build().unwrap();
 
-        let mut stream = RhinoStream::new(rt, src, filter, processor).unwrap();
+        let mut stream = RhinoStream::new(src, filter, processor).unwrap();
         let mut packet = Packet::new();
         for i in 0..10000 {
             stream.get_next_frame(&mut packet).unwrap();
@@ -47,7 +46,7 @@ mod test {
     fn test_config() {
         println!("{:?}", TuningInfo::value_variants());
         let config: NvencConfig = "-p p3 --profile auto --multi-pass quarter_res -t \
-        ultra_low_latency -r 1920x1080 --codec hevc --color nv12 -b 10000000 -f 144".parse().unwrap();
+        ultra_low_latency -r 1920x1080 --codec hevc --aq spacial --color nv12 -b 10000000 -f 144".parse().unwrap();
         assert_eq!(config, NvencConfig {
             preset: Preset::P3,
             profile: Profile::Auto,
@@ -55,7 +54,7 @@ mod test {
             tuning_info: TuningInfo::UltraLowLatency,
             color: NvencColor::NV12,
             codec: NvencCodec::HEVC,
-            disable_aq: false,
+            aq: AdaptiveQuantization::Spacial,
             resolution: Resolution { width: 1920, height: 1080 },
             bitrate: 10_000_000,
             framerate: 144.0,
@@ -101,13 +100,7 @@ pub struct NvEnc {
 
     complete_rx: Arc<Mutex<Receiver<NvMappedResource>>>,
     complete_tx: Option<Sender<NvMappedResource>>,
-    //
-    // signal_rx: Arc<Mutex<Receiver<u32>>>,
-    // signal_tx: Sender<u32>,
-    //
-    // config_rx: Arc<Mutex<Receiver<NvencConfig>>>,
-    // config_tx: Sender<NvencConfig>,
-
+    exec: Arc<Mutex<NvExecutor>>,
     started_background: bool,
 
     device: ID3D11Device4,
@@ -149,7 +142,9 @@ impl NvEnc {
 
         let (complete_tx, complete_rx) = channel(3);
         let complete_rx = Arc::new(Mutex::new(complete_rx));
-
+        let exec = NvExecutor::new(nv.clone(), enc,
+                                   preset_config, conf.clone(),
+                                   dev.clone(), dev_ctx.clone(), init_params);
         Ok(Self {
             nv,
             enc,
@@ -163,6 +158,7 @@ impl NvEnc {
             complete_rx,
             complete_tx: Some(complete_tx),
 
+            exec,
             started_background: false,
 
             device: dev.clone(),
@@ -322,7 +318,15 @@ impl NvEnc {
         preset.presetCfg.rcParams.averageBitRate = nv_conf.bitrate as _;
         preset.presetCfg.rcParams.vbvBufferSize = Self::get_vbv_buffer_size(120, nv_conf.bitrate as _, nv_conf.framerate as _) as _;
         preset.presetCfg.rcParams.multiPass = nv_conf.multi_pass.into();
-        preset.presetCfg.rcParams.set_enableAQ(if nv_conf.disable_aq { 0 } else { 1 });
+        match nv_conf.aq {
+            AdaptiveQuantization::Spacial => {
+                preset.presetCfg.rcParams.set_enableAQ(1);
+            }
+            AdaptiveQuantization::Temporal => {
+                preset.presetCfg.rcParams.set_enableTemporalAQ(1);
+            }
+            AdaptiveQuantization::Disabled => {}
+        }
         preset.presetCfg.gopLength = nvenc::NVENC_INFINITE_GOPLENGTH;
 
         match nv_conf.codec {
@@ -378,7 +382,7 @@ impl NvEnc {
             }
         }
 
-        if matches!(nv_conf.color,  NvencColor::YUV444| NvencColor::AYUV ) {
+        if matches!(nv_conf.color,  NvencColor::YUV444 | NvencColor::AYUV | NvencColor::ARGB | NvencColor::ABGR ) {
             preset.presetCfg.encodeCodecConfig.hevcConfig.set_chromaFormatIDC(3);
             preset.presetCfg.encodeCodecConfig.h264Config.chromaFormatIDC = 3;
         } else {
@@ -402,8 +406,8 @@ impl NvEnc {
         init_params.maxEncodeWidth = 3840;
         init_params.maxEncodeHeight = 3840;
 
-        init_params.frameRateNum = (nv_conf.framerate * 1000f32) as _;
-        init_params.frameRateDen = 1000;
+        init_params.frameRateNum = (nv_conf.framerate) as _;
+        init_params.frameRateDen = 1;
 
         init_params.bufferFormat = nv_conf.color.into();
 
@@ -440,7 +444,8 @@ fn into_err(status: nvenc::NVENCSTATUS) -> Result<()> {
 
 impl Signal for NvEnc {
     fn signal(&mut self, flags: u32) -> Result<()> {
-        todo!()
+        let mut exec = self.exec.blocking_lock();
+        exec.signal(flags)
     }
 }
 
@@ -448,13 +453,8 @@ impl Config for NvEnc {
     type ConfigType = NvencConfig;
 
     fn configure(&mut self, c: Self::ConfigType) -> Result<()> {
-        // let config_tx = self.config_tx.clone();
-        // tokio::spawn(async move {
-        //     let config_tx = config_tx;
-        //     config_tx.send(c).await;
-        // });
-        todo!()
-        // Ok(())
+        let mut exec = self.exec.blocking_lock();
+        exec.configure(c)
     }
 }
 
@@ -473,9 +473,7 @@ impl Processor for NvEnc {
 
     fn get_packet(&mut self, packet: Packet) -> Self::Future {
         if !self.started_background {
-            let exec = NvExecutor::new(self.nv.clone(), self.enc,
-                                       self.preset_config, self.conf.clone(),
-                                       self.device.clone(), self.ctx.clone());
+            let exec = self.exec.clone();
             let (wait_tx, wait_rx) = channel(4);
 
             let mut complete_tx = None;
@@ -645,9 +643,18 @@ impl NvencPool {
             }
         }
     }
-    pub(crate) async fn put_back(&self, item: NvQueueItem) {
+    pub(crate) async fn get_desc(&self) -> TextureDesc {
+        let state = self.state.lock().await;
+        state.desc
+    }
+
+    pub(crate) async fn put_back(&self, mut item: NvQueueItem) {
         let mut state = self.state.lock().await;
-        state.available.push(item);
+        if state.desc != item.get_item().resource.res.desc() {
+            item.item = None;
+        } else {
+            state.available.push(item);
+        }
     }
 }
 
@@ -906,6 +913,7 @@ struct NvExecutor {
     nv: Arc<nvenc::NV_ENCODE_API_FUNCTION_LIST>,
     enc: *mut c_void,
     preset: nvenc::NV_ENC_PRESET_CONFIG,
+    init_params: nvenc::NV_ENC_INITIALIZE_PARAMS,
     signal: u32,
     pic_params: nvenc::NV_ENC_PIC_PARAMS,
     config: NvencConfig,
@@ -919,7 +927,7 @@ impl NvExecutor {
     pub fn new(
         nv: Arc<nvenc::NV_ENCODE_API_FUNCTION_LIST>, enc: *mut c_void,
         preset: nvenc::NV_ENC_PRESET_CONFIG, config: NvencConfig,
-        device: ID3D11Device4, ctx: ID3D11DeviceContext4,
+        device: ID3D11Device4, ctx: ID3D11DeviceContext4, init_params: nvenc::NV_ENC_INITIALIZE_PARAMS,
     ) -> Arc<Mutex<Self>> {
         let mut pic_params: nvenc::_NV_ENC_PIC_PARAMS = unsafe { zeroed() };
 
@@ -942,6 +950,7 @@ impl NvExecutor {
             config,
             pool,
             device,
+            init_params,
             ctx,
         }))
     }
@@ -954,7 +963,12 @@ impl NvExecutor {
             }
         };
 
-        self.pool.configure(&tex.desc()).await;
+        let tex_desc = tex.desc();
+        if tex_desc != self.pool.get_desc().await {
+            self.pool.configure(&tex.desc()).await;
+            self.config.resolution = Resolution { width: tex_desc.width, height: tex_desc.height };
+            self.configure(self.config.clone())?;
+        }
 
         // get new queue item
         let mut item = self.pool.get_item().await?;
@@ -976,21 +990,45 @@ impl NvExecutor {
     pub fn get_enc_picparams(&mut self, item: &NvMappedResource) -> *mut nvenc::NV_ENC_PIC_PARAMS {
         let enc_params = &mut self.pic_params;
 
-
-        // TODO: handle IDR REFRESH
-
-        // if force_idr {
-        //     enc_params.encodePicFlags = (
-        //         nvenc::_NV_ENC_PIC_FLAGS_NV_ENC_PIC_FLAG_OUTPUT_SPSPPS |
-        //             nvenc::_NV_ENC_PIC_FLAGS_NV_ENC_PIC_FLAG_FORCEIDR
-        //     ) as _;
-        // }
+        if self.signal != 0 {
+            enc_params.encodePicFlags = (
+                nvenc::_NV_ENC_PIC_FLAGS_NV_ENC_PIC_FLAG_OUTPUT_SPSPPS |
+                    nvenc::_NV_ENC_PIC_FLAGS_NV_ENC_PIC_FLAG_FORCEIDR
+            ) as _;
+            self.signal = 0;
+        }
         enc_params.inputBuffer = item.mapped_res;
         enc_params.inputTimeStamp = item.item.start_time.elapsed().as_millis() as _;
         enc_params.outputBitstream = item.get_bitstream_buffer().buffer_ptr();
         enc_params.completionEvent = item.get_event().event.0 as nvenc::HANDLE;
 
         enc_params
+    }
+
+    pub fn configure(&mut self, conf: NvencConfig) -> Result<()> {
+        let init_params = &mut self.init_params;
+        init_params.encodeHeight = conf.resolution.height as _;
+        init_params.encodeWidth = conf.resolution.width as _;
+        init_params.frameRateNum = (conf.framerate) as _;
+        init_params.frameRateDen = 1;
+
+        self.preset.presetCfg.rcParams.averageBitRate = conf.bitrate as _;
+        self.preset.presetCfg.rcParams.vbvBufferSize = NvEnc::get_vbv_buffer_size(120, conf.bitrate as _, conf.framerate as _) as _;
+
+        init_params.encodeConfig = &mut self.preset.presetCfg;
+
+
+        let mut reinit_params: nvenc::NV_ENC_RECONFIGURE_PARAMS = unsafe { zeroed() };
+        reinit_params.version = nvenc::NV_ENC_RECONFIGURE_PARAMS_VER;
+        reinit_params.reInitEncodeParams = *init_params;
+        reinit_params.set_forceIDR(1);
+        let status = unsafe { self.nv.nvEncReconfigureEncoder.unwrap()(self.enc, &mut reinit_params) };
+        into_err(status)
+    }
+
+    pub fn signal(&mut self, flags: u32) -> Result<()> {
+        self.signal = flags;
+        Ok(())
     }
 }
 

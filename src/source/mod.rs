@@ -32,17 +32,22 @@ mod test {
 }
 
 
+use std::ffi::c_void;
 use std::mem::swap;
 use std::pin::Pin;
 use std::str::FromStr;
 use std::task::Poll;
 use clap::{Parser, AppSettings};
 use futures::{select, Stream, FutureExt, Future};
+use log::{info, warn};
 use tokio::sync::mpsc::{channel, Receiver, Sender};
 use win_desktop_duplication::{co_init, DesktopDuplicationApi, set_process_dpi_awareness};
 use win_desktop_duplication::devices::{Adapter, AdapterFactory};
 use win_desktop_duplication::errors::DDApiError;
 use win_desktop_duplication::outputs::{Display, DisplayMode};
+use windows::core::Interface;
+use windows::Win32::Graphics::Dxgi::IDXGIDevice4;
+use windows::Win32::System::Threading::{GetCurrentProcess, GetCurrentThread, HIGH_PRIORITY_CLASS, REALTIME_PRIORITY_CLASS, SetPriorityClass, SetThreadPriority, THREAD_PRIORITY_HIGHEST, THREAD_PRIORITY_TIME_CRITICAL};
 use crate::{Config, Context, FrameType, DxContext, Frame, Resolution, Result, RhinoError, Signal, Source};
 use crate::stream::DDA_ERR_MAP;
 
@@ -88,6 +93,7 @@ pub struct ScreenCap {
     adapter: Adapter,
     display: Display,
 
+    started: bool,
 }
 
 impl ScreenCap {
@@ -120,6 +126,7 @@ impl ScreenCap {
             curr_mode,
             adapter,
             display,
+            started: false,
         })
     }
 
@@ -173,6 +180,14 @@ impl Stream for ScreenCap {
     type Item = Result<Frame>;
 
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut std::task::Context<'_>) -> Poll<Option<Self::Item>> {
+        if !self.started {
+            set_thread_priority();
+            let (dev, _) = self.dupl.get_device_and_ctx();
+            let dev: IDXGIDevice4 = dev.cast().unwrap();
+            unsafe { dev.SetGPUThreadPriority(7); }
+            set_gpu_priority();
+            self.started = true;
+        }
         let task = self.dupl.acquire_next_vsync_frame();
         futures::pin_mut!(task);
         let res = task.poll(cx);
@@ -205,3 +220,34 @@ impl Stream for ScreenCap {
 
 impl Source for ScreenCap {}
 
+
+pub fn set_thread_priority() {
+    unsafe {
+        let status = SetPriorityClass(GetCurrentProcess(), REALTIME_PRIORITY_CLASS);
+        if status.0 == 0 {
+            SetPriorityClass(GetCurrentProcess(), HIGH_PRIORITY_CLASS);
+            SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_HIGHEST).unwrap();
+        } else {
+            info!("Process is set to time critical");
+            SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_TIME_CRITICAL).unwrap();
+        }
+    }
+}
+
+pub fn set_gpu_priority() {
+    unsafe {
+        let process = GetCurrentProcess();
+        let status = D3DKMTSetProcessSchedulingPriorityClass(process.0 as *mut c_void, 5);
+        if status != 0 {
+            warn!("cant set realtime gpu priority!!!, {:#x}",status);
+            D3DKMTSetProcessSchedulingPriorityClass(process.0 as *mut c_void, 4);
+        } else {
+            info!("successfully set GPU Priority");
+        }
+    }
+}
+
+
+extern "system" {
+    fn D3DKMTSetProcessSchedulingPriorityClass(handle: *mut c_void, priority: u32) -> u32;
+}

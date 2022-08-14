@@ -92,7 +92,7 @@ pub struct Packet {
 }
 
 impl Packet {
-    fn new() -> Self {
+    pub fn new() -> Self {
         Packet {
             data: vec![],
             kind: Default::default(),
@@ -124,7 +124,7 @@ pub struct DxContext {
 }
 
 pub trait Config {
-    type ConfigType: FromStr<Err=String>;
+    type ConfigType: FromStr<Err=String> + Send;
     fn configure(&mut self, c: Self::ConfigType) -> Result<()>;
     fn configure_from_str(&mut self, c: &str) -> Result<()> {
         let config: Self::ConfigType = c.parse().map_err(|s| RhinoError::ParseError(s))?;
