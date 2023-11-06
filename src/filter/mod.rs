@@ -65,8 +65,10 @@ fn create_texture(device: &ID3D11Device4, format: DXGI_FORMAT, c: &DxColorConfig
         CPUAccessFlags: Default::default(),
         MiscFlags: Default::default(),
     };
-    let tex = unsafe { device.CreateTexture2D(&desc, null()) }.map_err(WIN_ERR_MAP)?;
-    Ok(Texture::new(tex))
+    let mut tex = None;
+
+    unsafe { device.CreateTexture2D(&desc, None, Some(&mut tex)) }.map_err(WIN_ERR_MAP)?;
+    Ok(Texture::new(tex.unwrap()))
 }
 
 pub fn new_nv12_filter(conf: DxColorConfig, ctx: &mut Context) -> Result<DxColor<ConvertARGBToNV12>> {

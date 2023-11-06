@@ -2,9 +2,7 @@ extern crate core;
 
 use std::fmt::Debug;
 use std::future::Future;
-use std::pin::Pin;
 use std::str::FromStr;
-use std::time;
 use std::time::{Duration, Instant};
 use futures::Stream;
 use tokio::runtime::Runtime;
@@ -143,7 +141,9 @@ pub trait Filter: Config + Unpin + Send + 'static {
 }
 
 pub trait Processor: Signal + Config + Unpin + Send + 'static {
+
     type Future: Future<Output=Result<Packet>> + Send + 'static;
+
     fn get_queue(&mut self) -> Result<Sender<Frame>>;
 
     fn get_packet(&mut self, packet: Packet) -> Self::Future;

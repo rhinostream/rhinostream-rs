@@ -495,7 +495,7 @@ impl Processor for NvEnc {
 }
 
 
-pub(crate) struct NvQueueItem {
+pub struct NvQueueItem {
     item: Option<NvResEventGroup>,
     pool: Weak<NvencPool>,
     pub start_time: Instant,
@@ -566,7 +566,7 @@ impl Drop for NvQueueItem {
     }
 }
 
-pub(crate) struct NvencPool {
+pub struct NvencPool {
     enc: *mut c_void,
     nv: Arc<nvenc::NV_ENCODE_API_FUNCTION_LIST>,
     device: ID3D11Device4,
@@ -611,9 +611,12 @@ impl NvencPool {
             CPUAccessFlags: Default::default(),
             MiscFlags: Default::default(),
         };
-        let tex = unsafe { self.device.CreateTexture2D(&tex_desc, null()) }
-            .map_err(|e| RhinoError::Unexpected(format!("failed to create texture. {:?}", e)))?;
-        let tex = Texture::new(tex);
+        let mut tex = None;
+        unsafe {
+            self.device.CreateTexture2D(&tex_desc, None, Some(&mut tex))
+                .map_err(|e| RhinoError::Unexpected(format!("failed to create texture. {:?}", e)))?;
+        }
+        let tex = Texture::new(tex.unwrap().into());
 
         let res = NvRegisteredResource::new(self.nv.clone(), self.enc, tex)?;
         let ev = NvAsyncEvent::new(self.nv.clone(), self.enc)?;
@@ -658,7 +661,7 @@ impl NvencPool {
     }
 }
 
-struct NvRegisteredResource {
+pub struct NvRegisteredResource {
     enc: *mut c_void,
     reg_resource: nvenc::NV_ENC_REGISTERED_PTR,
     res: Texture,
@@ -706,7 +709,7 @@ impl NvRegisteredResource {
     }
 }
 
-struct NvAsyncEvent {
+pub struct NvAsyncEvent {
     enc: *mut c_void,
     event: HANDLE,
     nv: Arc<nvenc::NV_ENCODE_API_FUNCTION_LIST>,
@@ -721,7 +724,7 @@ impl Drop for NvAsyncEvent {
 
 impl NvAsyncEvent {
     pub fn new(nv: Arc<nvenc::NV_ENCODE_API_FUNCTION_LIST>, enc: *mut c_void) -> Result<Self> {
-        let handle = unsafe { CreateEventW(null(), true, false, None) }
+        let handle = unsafe { CreateEventW(None, true, false, None) }
             .map_err(|e| RhinoError::Unexpected(format!("{:?}", e).to_owned()))?;
 
         Self::register_event(nv.as_ref(), enc, handle)?;
@@ -758,7 +761,7 @@ impl NvAsyncEvent {
     }
 }
 
-struct NvBitstreamBuffer {
+pub struct NvBitstreamBuffer {
     enc: *mut c_void,
     buffer_ptr: nvenc::NV_ENC_OUTPUT_PTR,
     nv: Arc<nvenc::NV_ENCODE_API_FUNCTION_LIST>,
@@ -830,7 +833,7 @@ impl<'a> NvLockedBitstream<'a> {
     }
 }
 
-struct NvResEventGroup {
+pub struct NvResEventGroup {
     resource: NvRegisteredResource,
     event: NvAsyncEvent,
     buffer: NvBitstreamBuffer,
@@ -861,7 +864,7 @@ impl NvResEventGroup {
     }
 }
 
-struct NvMappedResource {
+pub struct NvMappedResource {
     nv: Arc<nvenc::NV_ENCODE_API_FUNCTION_LIST>,
     enc: *mut c_void,
     item: NvQueueItem,
