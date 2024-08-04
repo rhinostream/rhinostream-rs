@@ -1,42 +1,48 @@
 use std::str::FromStr;
-use clap::{Parser, AppSettings, ValueEnum};
+
+use clap::{Parser, ValueEnum};
 use win_desktop_duplication::texture::ColorFormat;
-use nvenc_sys::GUID;
+
 use nvenc_sys as nvenc;
+use nvenc_sys::GUID;
+
 use crate::Resolution;
 
 #[derive(Parser, Debug, Clone, PartialEq)]
-#[clap(author, version, about)]
-#[clap(setting(AppSettings::NoBinaryName))]
+#[command(author, version, about)]
+#[command(no_binary_name = true)]
 pub struct NvencConfig {
-    #[clap(short = 'p', long, value_enum, default_value = "p4")]
+    #[arg(short = 'p', long, value_enum, default_value = "p4")]
     pub preset: Preset,
 
-    #[clap(long, value_enum, default_value = "auto")]
+    #[arg(long, value_enum, default_value = "auto")]
     pub profile: Profile,
 
-    #[clap(long, value_enum, default_value = "disabled")]
+    #[arg(long)]
+    pub level: Option<u32>,
+
+    #[arg(long, value_enum, default_value = "disabled")]
     pub multi_pass: MultiPass,
 
-    #[clap(short = 't', long, value_enum, default_value = "low_latency")]
+    #[arg(short = 't', long, value_enum, default_value = "low_latency")]
     pub tuning_info: TuningInfo,
 
-    #[clap(long, value_enum, default_value = "argb")]
+    #[arg(long, value_enum, default_value = "argb")]
     pub color: NvencColor,
 
-    #[clap(short = 'c', long, value_enum, default_value = "h264")]
+    #[arg(short = 'c', long, value_enum, default_value = "h264")]
     pub codec: NvencCodec,
 
-    #[clap(long, value_parser, default_value = "disabled")]
+    #[arg(long, value_parser, default_value = "disabled")]
     pub aq: AdaptiveQuantization,
 
-    #[clap(short = 'r', long, value_parser = Resolution::from_str, default_value = "0x0")]
+    #[arg(short = 'r', long, value_parser = Resolution::from_str, default_value = "0x0")]
     pub resolution: Resolution,
 
-    #[clap(short = 'b', long, value_parser, default_value_t = 5_000_000)]
+    #[arg(short = 'b', long, value_parser, default_value_t = 5_000_000)]
     pub bitrate: u64,
 
-    #[clap(short = 'f', long, value_parser, default_value_t = 60f32)]
+    #[arg(short = 'f', long, value_parser, default_value_t = 60f32)]
     pub framerate: f32,
 }
 
@@ -55,7 +61,7 @@ impl FromStr for NvencConfig {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, ValueEnum)]
-#[clap(rename_all = "snake_case")]
+#[value(rename_all = "snake_case")]
 pub enum AdaptiveQuantization {
     Disabled,
     Spacial,
@@ -63,7 +69,7 @@ pub enum AdaptiveQuantization {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, ValueEnum)]
-#[clap(rename_all = "snake_case")]
+#[value(rename_all = "snake_case")]
 pub enum Preset {
     P1,
     P2,
@@ -89,7 +95,7 @@ impl Into<GUID> for Preset {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, ValueEnum)]
-#[clap(rename_all = "snake_case")]
+#[value(rename_all = "snake_case")]
 pub enum Profile {
     Auto,
     Constrained,
@@ -99,7 +105,7 @@ pub enum Profile {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, ValueEnum)]
-#[clap(rename_all = "snake_case")]
+#[value(rename_all = "snake_case")]
 pub enum NvencColor {
     ARGB,
     ABGR,
@@ -151,7 +157,7 @@ impl From<ColorFormat> for NvencColor {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, ValueEnum)]
-#[clap(rename_all = "snake_case")]
+#[value(rename_all = "snake_case")]
 pub enum NvencCodec {
     H264,
     HEVC,
@@ -171,7 +177,7 @@ impl Into<GUID> for NvencCodec {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, ValueEnum)]
-#[clap(rename_all = "snake_case")]
+#[value(rename_all = "snake_case")]
 pub enum MultiPass {
     Disabled,
     QuarterRes,
@@ -190,7 +196,7 @@ impl Into<nvenc::NV_ENC_MULTI_PASS> for MultiPass {
 
 
 #[derive(Clone, Copy, Debug, PartialEq, ValueEnum)]
-#[clap(rename_all = "snake_case")]
+#[value(rename_all = "snake_case")]
 pub enum TuningInfo {
     LowLatency,
     UltraLowLatency,

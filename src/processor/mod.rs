@@ -1,20 +1,13 @@
 use std::borrow::BorrowMut;
-use std::collections::VecDeque;
 use std::future::Future;
 use std::mem::swap;
 use std::pin::Pin;
-use std::ptr::null;
 use std::str::FromStr;
 use std::sync::Arc;
-use std::task::Poll;
 use futures::Stream;
-use log::error;
 use tokio::sync::mpsc::{channel, Receiver, Sender};
 use tokio::sync::Mutex;
 use win_desktop_duplication::tex_reader::TextureReader;
-use win_desktop_duplication::texture::{Texture, TextureDesc};
-use windows::Win32::Graphics::Direct3D11::{D3D11_BIND_RENDER_TARGET, D3D11_TEXTURE2D_DESC, ID3D11Device4};
-use windows::Win32::Graphics::Dxgi::Common::DXGI_SAMPLE_DESC;
 use crate::{Config, Context, Frame, Packet, Processor, RhinoError, Result, Signal, FrameType, PacketKind};
 use crate::stream::DDA_ERR_MAP;
 

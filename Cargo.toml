@@ -5,18 +5,27 @@ edition = "2021"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
+[build-dependencies]
+cbindgen = "0.26.0"
+
+
 [lib]
 name = "rhinostream"
 crate-type = ["cdylib"]
 
+
+#[[bin]]
+#name = "stream_bench"
+#path = "examples/stream_bench.rs"
+
 [dependencies]
-win_desktop_duplication = "0.10.7"
-dxfilter = "0.5.12"
+win_desktop_duplication = "0.10.8"
+dxfilter = "0.5.13"
 futures = "0.3.21"
 log = "0.4.17"
 tokio = { version = "1.20.1", features = ["rt", "sync", "rt-multi-thread"] }
-clap = { version = "3.2.23", features = ['derive'] }
-windows = { version = "0.44.0", features = [
+clap = { version = "4.5.6", features = ['derive'] }
+windows = { version = "0.57.0", features = [
     "Win32_Graphics_Direct3D11",
     "Win32_Graphics_Dxgi",
     "Win32_System_StationsAndDesktops",
@@ -26,9 +35,7 @@ windows = { version = "0.44.0", features = [
     "Win32_Security"
 ] }
 nvenc-sys = { path = "nvenc-sys", optional = true }
-
-[dev-dependencies]
-env_logger = "0.10.0"
+env_logger = "0.11.5"
 
 [workspace]
 members = [

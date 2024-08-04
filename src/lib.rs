@@ -4,12 +4,15 @@ use std::fmt::Debug;
 use std::future::Future;
 use std::str::FromStr;
 use std::time::{Duration, Instant};
+
 use futures::Stream;
 use tokio::runtime::Runtime;
 use tokio::sync::mpsc::Sender;
 use win_desktop_duplication::texture::Texture;
 use windows::Win32::Graphics::Direct3D11::{ID3D11Device4, ID3D11DeviceContext4};
+
 use crate::errors::RhinoError;
+pub use crate::errors::RhinoResult as Result;
 
 pub mod stream;
 pub mod errors;
@@ -17,11 +20,10 @@ pub mod errors;
 pub mod source;
 pub mod filter;
 pub mod processor;
-
-pub use crate::errors::RhinoResult as Result;
+pub mod clib;
 
 /// A single session of the service. All the internal underlying runtime is controlled by this.
-/// if this object is dropped, all of the services associated with this.
+/// if this object is dropped, all the services associated with this.
 pub struct RhinoClient {
     rt: Runtime,
 }
@@ -46,7 +48,7 @@ impl Frame {
     }
 }
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Default)]
 pub struct Resolution {
     pub width: u32,
     pub height: u32,
@@ -141,7 +143,6 @@ pub trait Filter: Config + Unpin + Send + 'static {
 }
 
 pub trait Processor: Signal + Config + Unpin + Send + 'static {
-
     type Future: Future<Output=Result<Packet>> + Send + 'static;
 
     fn get_queue(&mut self) -> Result<Sender<Frame>>;

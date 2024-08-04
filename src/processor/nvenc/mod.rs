@@ -1,19 +1,43 @@
+use std::{sync, thread};
+use std::ffi::c_void;
+use std::future::Future;
+use std::mem::{swap, transmute, transmute_copy, zeroed};
+use std::pin::Pin;
+use std::ptr::{null, null_mut};
+use std::slice::from_raw_parts;
+use std::str::FromStr;
+use std::sync::{Arc, RwLock, Weak};
+use std::time::Instant;
+
+use clap::{Parser, ValueEnum};
+use log::{debug, error, info, trace};
+use tokio::sync::mpsc::{channel, Receiver, Sender};
+use tokio::sync::Mutex;
+use win_desktop_duplication::texture::{Texture, TextureDesc};
+use windows::Win32::Foundation::{CloseHandle, HANDLE};
+use windows::Win32::Graphics::Direct3D11::{D3D11_BIND_RENDER_TARGET, D3D11_TEXTURE2D_DESC, ID3D11Device4, ID3D11DeviceContext4};
+use windows::Win32::Graphics::Dxgi::Common::DXGI_SAMPLE_DESC;
+use windows::Win32::System::Threading::{CreateEventExW, CreateEventW, ResetEvent, WaitForSingleObject};
+
+pub use _types::*;
+use nvenc_sys as nvenc;
+use nvenc_sys::GUID;
+
+use crate::{Config, Context, Frame, FrameType, Packet, PacketKind, Processor, Resolution, Result, RhinoError, Signal};
+
 #[cfg(test)]
 mod test {
-    use std::sync::mpsc::channel;
     use std::sync::Once;
-    use std::thread;
-    use log::LevelFilter::{Debug};
-    use tokio::runtime::{Builder, Runtime};
-    use crate::{Context, Packet};
-    use crate::filter::{new_argb_filter, new_ayuv_filter, new_nv12_filter};
-    use crate::processor::CopyTexToCPU;
-    use crate::source::ScreenCap;
-    use crate::stream::RhinoStream;
+
     use clap::ValueEnum;
+    use log::LevelFilter::Debug;
+
+    use crate::{Context, Packet};
+    use crate::filter::new_ayuv_filter;
     use crate::processor::nvenc::{AdaptiveQuantization, MultiPass, NvEnc, NvencCodec, NvencColor, NvencConfig, Preset, Profile, TuningInfo};
     use crate::Resolution;
-
+    use crate::source::DxDesktopDuplication;
+    use crate::stream::RhinoStream;
 
     static ONCE: Once = Once::new();
 
@@ -27,7 +51,7 @@ mod test {
     fn test_stream() {
         initialize();
         let mut ctx = Context::None;
-        let src = ScreenCap::new("--screen 0".parse().unwrap(), &mut ctx).unwrap();
+        let src = DxDesktopDuplication::new("--screen 0".parse().unwrap(), &mut ctx).unwrap();
         let filter = new_ayuv_filter("-r 1920x1080".parse().unwrap(), &mut ctx).unwrap();
         let config: NvencConfig = "-p p1 --profile auto --multi-pass quarter_res -t \
         ultra_low_latency -r 1920x1080 --codec hevc --color argb -b 10000000 -f 144".parse().unwrap();
@@ -52,6 +76,7 @@ mod test {
             profile: Profile::Auto,
             multi_pass: MultiPass::QuarterRes,
             tuning_info: TuningInfo::UltraLowLatency,
+            level: None,
             color: NvencColor::NV12,
             codec: NvencCodec::HEVC,
             aq: AdaptiveQuantization::Spacial,
@@ -63,30 +88,6 @@ mod test {
 }
 
 mod _types;
-
-pub use _types::*;
-use std::ffi::c_void;
-use std::future::Future;
-use std::mem::{swap, transmute, transmute_copy, zeroed};
-use std::pin::Pin;
-use std::ptr::{null, null_mut};
-use std::slice::from_raw_parts;
-use std::str::FromStr;
-use std::sync::{Arc, Weak};
-use std::thread;
-use std::time::Instant;
-use clap::{Parser, AppSettings, ValueEnum};
-use log::{debug, error, trace};
-use tokio::sync::mpsc::{channel, Receiver, Sender};
-use tokio::sync::Mutex;
-use win_desktop_duplication::texture::{Texture, TextureDesc};
-use windows::Win32::Foundation::{CloseHandle, HANDLE};
-use windows::Win32::Graphics::Direct3D11::{D3D11_BIND_RENDER_TARGET, D3D11_TEXTURE2D_DESC, ID3D11Device4, ID3D11DeviceContext4};
-use windows::Win32::Graphics::Dxgi::Common::DXGI_SAMPLE_DESC;
-use windows::Win32::System::Threading::{CreateEventExW, CreateEventW, ResetEvent, WaitForSingleObject};
-use crate::{Config, Context, Frame, FrameType, Packet, PacketKind, Processor, Resolution, Result, RhinoError, Signal};
-use nvenc_sys as nvenc;
-use nvenc_sys::{GUID};
 
 pub struct NvEnc {
     nv: Arc<nvenc::NV_ENCODE_API_FUNCTION_LIST>,
@@ -315,6 +316,7 @@ impl NvEnc {
         into_err(status)?;
 
         // set profile once again
+        preset.presetCfg.rcParams.set_zeroReorderDelay(1);
         preset.presetCfg.rcParams.averageBitRate = nv_conf.bitrate as _;
         preset.presetCfg.rcParams.vbvBufferSize = Self::get_vbv_buffer_size(120, nv_conf.bitrate as _, nv_conf.framerate as _) as _;
         preset.presetCfg.rcParams.multiPass = nv_conf.multi_pass.into();
@@ -331,6 +333,10 @@ impl NvEnc {
 
         match nv_conf.codec {
             NvencCodec::H264 => {
+                if let Some(level) = nv_conf.level {
+                    preset.presetCfg.encodeCodecConfig.h264Config.level = level;
+                }
+
                 preset.presetCfg.encodeCodecConfig.h264Config.h264VUIParameters.videoSignalTypePresentFlag = 1;
                 preset.presetCfg.encodeCodecConfig.h264Config.h264VUIParameters.videoFormat = 5;
                 preset.presetCfg.encodeCodecConfig.h264Config.h264VUIParameters.videoFullRangeFlag = 0;
@@ -338,6 +344,14 @@ impl NvEnc {
                 preset.presetCfg.encodeCodecConfig.h264Config.h264VUIParameters.colourPrimaries = 1;
                 preset.presetCfg.encodeCodecConfig.h264Config.h264VUIParameters.transferCharacteristics = 1;
                 preset.presetCfg.encodeCodecConfig.h264Config.h264VUIParameters.colourMatrix = 1;
+                preset.presetCfg.encodeCodecConfig.h264Config.h264VUIParameters.bitstreamRestrictionFlag = 1;
+                preset.presetCfg.encodeCodecConfig.h264Config.h264VUIParameters.reserved[0] = 1;
+                preset.presetCfg.encodeCodecConfig.h264Config.h264VUIParameters.reserved[1] = 0;
+                preset.presetCfg.encodeCodecConfig.h264Config.h264VUIParameters.reserved[2] = 0;
+                preset.presetCfg.encodeCodecConfig.h264Config.h264VUIParameters.reserved[3] = 11;
+                preset.presetCfg.encodeCodecConfig.h264Config.h264VUIParameters.reserved[4] = 11;
+                preset.presetCfg.encodeCodecConfig.h264Config.h264VUIParameters.reserved[5] = 0;
+                preset.presetCfg.encodeCodecConfig.h264Config.h264VUIParameters.reserved[6] = 0;
 
 
                 // settings for multi threading scenarios
@@ -358,6 +372,10 @@ impl NvEnc {
                 preset.presetCfg.encodeCodecConfig.h264Config.intraRefreshPeriod = 500;
             }
             NvencCodec::HEVC => {
+                if let Some(level) = nv_conf.level {
+                    preset.presetCfg.encodeCodecConfig.hevcConfig.level = level;
+                }
+
                 preset.presetCfg.encodeCodecConfig.hevcConfig.set_enableAlphaLayerEncoding(0);
 
                 preset.presetCfg.encodeCodecConfig.hevcConfig.hevcVUIParameters.videoSignalTypePresentFlag = 1;
@@ -382,7 +400,7 @@ impl NvEnc {
             }
         }
 
-        if matches!(nv_conf.color,  NvencColor::YUV444 | NvencColor::AYUV | NvencColor::ARGB | NvencColor::ABGR ) {
+        if matches!(nv_conf.color,  NvencColor::YUV444) {
             preset.presetCfg.encodeCodecConfig.hevcConfig.set_chromaFormatIDC(3);
             preset.presetCfg.encodeCodecConfig.h264Config.chromaFormatIDC = 3;
         } else {
@@ -444,8 +462,12 @@ fn into_err(status: nvenc::NVENCSTATUS) -> Result<()> {
 
 impl Signal for NvEnc {
     fn signal(&mut self, flags: u32) -> Result<()> {
-        let mut exec = self.exec.blocking_lock();
-        exec.signal(flags)
+        let exec = self.exec.clone();
+        tokio::task::spawn(async move {
+            let mut exec = exec.lock().await;
+            exec.signal(flags)
+        });
+        return Ok(());
     }
 }
 
@@ -453,8 +475,12 @@ impl Config for NvEnc {
     type ConfigType = NvencConfig;
 
     fn configure(&mut self, c: Self::ConfigType) -> Result<()> {
-        let mut exec = self.exec.blocking_lock();
-        exec.configure(c)
+        let exec = self.exec.clone();
+        tokio::task::spawn(async move {
+            let mut exec = exec.lock().await;
+            exec.configure(c)
+        });
+        Ok(())
     }
 }
 
@@ -507,6 +533,7 @@ unsafe impl Sync for NvQueueItem {}
 
 impl NvQueueItem {
     pub fn new(item: NvResEventGroup, pool: Weak<NvencPool>) -> Self {
+        trace!("new nvenc queue item");
         Self {
             item: Some(item),
             pool,
@@ -607,7 +634,7 @@ impl NvencPool {
             Format: desc.format.into(),
             SampleDesc: DXGI_SAMPLE_DESC { Count: 1, Quality: 0 },
             Usage: Default::default(),
-            BindFlags: D3D11_BIND_RENDER_TARGET,
+            BindFlags: D3D11_BIND_RENDER_TARGET.0 as _,
             CPUAccessFlags: Default::default(),
             MiscFlags: Default::default(),
         };
@@ -999,6 +1026,8 @@ impl NvExecutor {
                     nvenc::_NV_ENC_PIC_FLAGS_NV_ENC_PIC_FLAG_FORCEIDR
             ) as _;
             self.signal = 0;
+        } else {
+            enc_params.encodePicFlags = 0;
         }
         enc_params.inputBuffer = item.mapped_res;
         enc_params.inputTimeStamp = item.item.start_time.elapsed().as_millis() as _;

@@ -1,24 +1,49 @@
+use std::ffi::c_void;
+use std::mem::swap;
+use std::pin::Pin;
+use std::str::FromStr;
+use std::task::Poll;
+
+use clap::Parser;
+use futures::{Future, FutureExt, select, Stream};
+use log::{info, warn};
+use tokio::sync::mpsc::{channel, Receiver, Sender};
+use win_desktop_duplication::{co_init, DesktopDuplicationApi, DuplicationApiOptions, set_process_dpi_awareness};
+use win_desktop_duplication::devices::{Adapter, AdapterFactory};
+use win_desktop_duplication::errors::DDApiError;
+use win_desktop_duplication::outputs::{Display, DisplayMode};
+use windows::core::Interface;
+use windows::Win32::Graphics::Dxgi::IDXGIDevice4;
+use windows::Win32::System::Threading::{GetCurrentProcess, GetCurrentThread, HIGH_PRIORITY_CLASS, REALTIME_PRIORITY_CLASS, SetPriorityClass, SetThreadPriority, THREAD_PRIORITY_HIGHEST, THREAD_PRIORITY_TIME_CRITICAL};
+
+use crate::{Config, Context, DxContext, Frame, FrameType, Resolution, Result, RhinoError, Signal, Source};
+use crate::stream::DDA_ERR_MAP;
+
 #[cfg(test)]
 mod test {
     use std::str::FromStr;
-    use std::thread::{sleep};
+    use std::thread::sleep;
     use std::time::Duration;
+
+    use clap::Parser;
+
     use crate::{Context, Resolution};
-    use crate::filter::DxColorConfig;
-    use crate::source::{ScreenCap, ScreenCapConfig};
+    use crate::filter::{DxColorConfig, DxColorFilterType};
+    use crate::source::{DxDesktopDuplication, ScreenCapConfig};
 
     #[test]
     fn test_config() {
-        let conf: ScreenCapConfig = "--screen 1 -r 1920x1080 -f 60.0".parse().unwrap();
+        let mut conf: ScreenCapConfig = "--screen 1 -r 1920x1080 -f 60.0".parse().unwrap();
         assert_eq!(conf, ScreenCapConfig {
             screen: 1,
             refresh_rate: 60.0,
             resolution: Some(Resolution { width: 1920, height: 1080 }),
+            skip_cursor: false,
         });
-
-        let filter_conf = DxColorConfig::from_str("-r 1920x1080").unwrap();
+        let filter_conf = DxColorConfig::from_str("-c nv12 -r 1920x1080").unwrap();
         assert_eq!(filter_conf, DxColorConfig {
-            resolution: Resolution { width: 1920, height: 1080 }
+            resolution: Resolution { width: 1920, height: 1080 },
+            color: DxColorFilterType::NV12Filter,
         })
     }
 
@@ -26,47 +51,30 @@ mod test {
     fn test_screen_cap() {
         let conf = ScreenCapConfig::from_str("--screen 0 -r 1920x1080 -f 60.0").unwrap();
         let mut ctx = Context::None;
-        let scp = ScreenCap::new(conf, &mut ctx).unwrap();
+        let scp = DxDesktopDuplication::new(conf, &mut ctx).unwrap();
         sleep(Duration::from_millis(3000));
     }
 }
 
 
-use std::ffi::c_void;
-use std::mem::swap;
-use std::pin::Pin;
-use std::str::FromStr;
-use std::task::Poll;
-use clap::{Parser, AppSettings};
-use futures::{select, Stream, FutureExt, Future};
-use log::{info, warn};
-use tokio::sync::mpsc::{channel, Receiver, Sender};
-use win_desktop_duplication::{co_init, DesktopDuplicationApi, set_process_dpi_awareness};
-use win_desktop_duplication::devices::{Adapter, AdapterFactory};
-use win_desktop_duplication::errors::DDApiError;
-use win_desktop_duplication::outputs::{Display, DisplayMode};
-use windows::core::Interface;
-use windows::Win32::Graphics::Dxgi::IDXGIDevice4;
-use windows::Win32::System::Threading::{GetCurrentProcess, GetCurrentThread, HIGH_PRIORITY_CLASS, REALTIME_PRIORITY_CLASS, SetPriorityClass, SetThreadPriority, THREAD_PRIORITY_HIGHEST, THREAD_PRIORITY_TIME_CRITICAL};
-use crate::{Config, Context, FrameType, DxContext, Frame, Resolution, Result, RhinoError, Signal, Source};
-use crate::stream::DDA_ERR_MAP;
-
-
 #[derive(Parser, Debug, Clone, PartialEq)]
-#[clap(author, version, about)]
-#[clap(setting(AppSettings::NoBinaryName))]
+#[command(author, version, about, no_binary_name = true)]
 pub struct ScreenCapConfig {
     /// index of the screen to capture
-    #[clap(short = 's', long, value_parser, default_value_t = 0)]
+    #[arg(short = 's', long, value_parser, default_value_t = 0)]
     pub screen: u8,
 
     /// frame rate to output
-    #[clap(short = 'f', long, value_parser, default_value_t = 0f32)]
+    #[arg(short = 'f', long, value_parser, default_value_t = 0f32)]
     pub refresh_rate: f32,
 
     /// resolution to set for the display
-    #[clap(short = 'r', long, value_parser = Resolution::from_str)]
+    #[arg(short = 'r', long, value_parser = Resolution::from_str)]
     pub resolution: Option<Resolution>,
+
+    /// The screen will be captured without cursor.
+    #[arg(long, value_parser)]
+    pub skip_cursor: bool,
 }
 
 impl FromStr for ScreenCapConfig {
@@ -83,7 +91,7 @@ impl FromStr for ScreenCapConfig {
     }
 }
 
-pub struct ScreenCap {
+pub struct DxDesktopDuplication {
     config: ScreenCapConfig,
     dupl: DesktopDuplicationApi,
 
@@ -96,7 +104,7 @@ pub struct ScreenCap {
     started: bool,
 }
 
-impl ScreenCap {
+impl DxDesktopDuplication {
     pub fn new(conf: ScreenCapConfig, ctx: &mut Context) -> Result<Self> {
         set_process_dpi_awareness();
         co_init();
@@ -115,7 +123,8 @@ impl ScreenCap {
         display.set_display_mode(&curr_mode).map_err(|e| { RhinoError::Unexpected(format!("change display mode failed {:?}", e)) })?;
         curr_mode = display.get_current_display_mode().map_err(|e| { RhinoError::Unexpected(format!("{:?}", e)) })?;
 
-        let dupl = DesktopDuplicationApi::new(adapter.clone(), display.clone()).map_err(DDA_ERR_MAP)?;
+        let mut dupl = DesktopDuplicationApi::new(adapter.clone(), display.clone()).map_err(DDA_ERR_MAP)?;
+        dupl.configure(DuplicationApiOptions { skip_cursor: conf.skip_cursor, ..Default::default() });
         let (dev, dev_ctx) = dupl.get_device_and_ctx();
         *ctx = Context::DxContext(DxContext { device: dev, ctx: dev_ctx });
 
@@ -144,19 +153,19 @@ impl ScreenCap {
     }
 }
 
-impl Drop for ScreenCap {
+impl Drop for DxDesktopDuplication {
     fn drop(&mut self) {
         let _ = self.display.set_display_mode(&self.orig_mode);
     }
 }
 
-impl Signal for ScreenCap {
+impl Signal for DxDesktopDuplication {
     fn signal(&mut self, _flags: u32) -> Result<()> {
         return Ok(());
     }
 }
 
-impl Config for ScreenCap {
+impl Config for DxDesktopDuplication {
     type ConfigType = ScreenCapConfig;
 
     fn configure(&mut self, c: Self::ConfigType) -> Result<()> {
@@ -176,7 +185,7 @@ impl Config for ScreenCap {
 }
 
 
-impl Stream for ScreenCap {
+impl Stream for DxDesktopDuplication {
     type Item = Result<Frame>;
 
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut std::task::Context<'_>) -> Poll<Option<Self::Item>> {
@@ -218,13 +227,13 @@ impl Stream for ScreenCap {
     }
 }
 
-impl Source for ScreenCap {}
+impl Source for DxDesktopDuplication {}
 
 
 pub fn set_thread_priority() {
     unsafe {
         let status = SetPriorityClass(GetCurrentProcess(), REALTIME_PRIORITY_CLASS);
-        if status.0 == 0 {
+        if status.is_err() {
             SetPriorityClass(GetCurrentProcess(), HIGH_PRIORITY_CLASS);
             SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_HIGHEST).unwrap();
         } else {
