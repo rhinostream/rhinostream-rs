@@ -385,6 +385,14 @@ impl NvEnc {
                 preset.presetCfg.encodeCodecConfig.hevcConfig.hevcVUIParameters.colourPrimaries = 1;
                 preset.presetCfg.encodeCodecConfig.hevcConfig.hevcVUIParameters.transferCharacteristics = 1;
                 preset.presetCfg.encodeCodecConfig.hevcConfig.hevcVUIParameters.colourMatrix = 1;
+                preset.presetCfg.encodeCodecConfig.hevcConfig.hevcVUIParameters.bitstreamRestrictionFlag = 1;
+                preset.presetCfg.encodeCodecConfig.hevcConfig.hevcVUIParameters.reserved[0] = 1;
+                preset.presetCfg.encodeCodecConfig.hevcConfig.hevcVUIParameters.reserved[1] = 0;
+                preset.presetCfg.encodeCodecConfig.hevcConfig.hevcVUIParameters.reserved[2] = 0;
+                preset.presetCfg.encodeCodecConfig.hevcConfig.hevcVUIParameters.reserved[3] = 11;
+                preset.presetCfg.encodeCodecConfig.hevcConfig.hevcVUIParameters.reserved[4] = 11;
+                preset.presetCfg.encodeCodecConfig.hevcConfig.hevcVUIParameters.reserved[5] = 0;
+                preset.presetCfg.encodeCodecConfig.hevcConfig.hevcVUIParameters.reserved[6] = 1;
 
                 preset.presetCfg.encodeCodecConfig.hevcConfig.set_enableFillerDataInsertion(0);
                 preset.presetCfg.encodeCodecConfig.hevcConfig.set_outputBufferingPeriodSEI(0);
