@@ -351,7 +351,7 @@ impl NvEnc {
                 preset.presetCfg.encodeCodecConfig.h264Config.h264VUIParameters.reserved[3] = 11;
                 preset.presetCfg.encodeCodecConfig.h264Config.h264VUIParameters.reserved[4] = 11;
                 preset.presetCfg.encodeCodecConfig.h264Config.h264VUIParameters.reserved[5] = 0;
-                preset.presetCfg.encodeCodecConfig.h264Config.h264VUIParameters.reserved[6] = 0;
+                preset.presetCfg.encodeCodecConfig.h264Config.h264VUIParameters.reserved[6] = 1;
 
 
                 // settings for multi threading scenarios
