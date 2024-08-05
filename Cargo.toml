@@ -19,7 +19,7 @@ crate-type = ["cdylib"]
 #path = "examples/stream_bench.rs"
 
 [dependencies]
-win_desktop_duplication = "0.10.9"
+win_desktop_duplication = "0.10.11"
 dxfilter = "0.5.13"
 futures = "0.3.21"
 log = "0.4.17"

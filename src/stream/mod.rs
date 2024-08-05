@@ -180,7 +180,6 @@ impl<T: Source, U: Filter, V: Processor> RhinoStream<T, U, V> {
                 };
 
                 Self::try_signal(&mut src, &mut ss_rx);
-
                 Self::try_configure(&mut src, &mut sc_rx);
                 Self::try_configure(&mut filter, &mut fc_rx);
             }

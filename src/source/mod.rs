@@ -35,6 +35,7 @@ mod test {
     fn test_config() {
         let mut conf: ScreenCapConfig = "--screen 1 -r 1920x1080 -f 60.0".parse().unwrap();
         assert_eq!(conf, ScreenCapConfig {
+            adapter: 0,
             screen: 1,
             refresh_rate: 60.0,
             resolution: Some(Resolution { width: 1920, height: 1080 }),
@@ -61,8 +62,12 @@ mod test {
 #[command(author, version, about, no_binary_name = true)]
 pub struct ScreenCapConfig {
     /// index of the screen to capture
+    #[arg(short = 'a', long, value_parser, default_value_t = 0)]
+    pub adapter: u32,
+
+    /// index of the screen to capture
     #[arg(short = 's', long, value_parser, default_value_t = 0)]
-    pub screen: u8,
+    pub screen: u32,
 
     /// frame rate to output
     #[arg(short = 'f', long, value_parser, default_value_t = 0f32)]
@@ -108,7 +113,7 @@ impl DxDesktopDuplication {
     pub fn new(conf: ScreenCapConfig, ctx: &mut Context) -> Result<Self> {
         set_process_dpi_awareness();
         co_init();
-        let (adapter, display) = Self::get_adapter_output(conf.screen)?;
+        let (adapter, display) = Self::get_adapter_output(conf.adapter, conf.screen)?;
         let orig_mode = display.get_current_display_mode().map_err(|e| { RhinoError::Unexpected(format!("{:?}", e)) })?;
         let mut curr_mode = orig_mode.clone();
         if conf.resolution.is_some() {
@@ -139,17 +144,19 @@ impl DxDesktopDuplication {
         })
     }
 
-    fn get_adapter_output(screen: u8) -> Result<(Adapter, Display)> {
-        let mut idx = 0;
-        for adapter in AdapterFactory::new() {
-            for output in adapter.iter_displays() {
-                if idx == screen {
-                    return Ok((adapter, output));
-                }
-                idx += 1;
+    fn get_adapter_output(adapter_idx: u32, screen_idx: u32) -> Result<(Adapter, Display)> {
+        let adapters = AdapterFactory::new();
+        let adapter = adapters.get_adapter_by_idx(adapter_idx);
+        if let Some(adapter) = adapter {
+            let screen = adapter.get_display_by_idx(screen_idx);
+            if let Some(screen) = screen {
+                Ok((adapter.clone(), screen.clone()))
+            } else {
+                Err(RhinoError::NotFound)
             }
+        } else {
+            Err(RhinoError::NotFound)
         }
-        return Err(RhinoError::NotFound);
     }
 }
 
@@ -173,13 +180,14 @@ impl Config for DxDesktopDuplication {
             let res = c.resolution.as_ref().unwrap();
             self.curr_mode.height = res.height;
             self.curr_mode.width = res.width;
+            if c.refresh_rate != 0f32 {
+                self.curr_mode.refresh_num = (c.refresh_rate * 1000f32) as _;
+                self.curr_mode.refresh_den = 1000;
+            }
+            self.display.set_display_mode(&self.curr_mode).map_err(DDA_ERR_MAP)?;
+            self.curr_mode = self.display.get_current_display_mode().map_err(DDA_ERR_MAP)?;
         }
-        if c.refresh_rate != 0f32 {
-            self.curr_mode.refresh_num = (c.refresh_rate * 1000f32) as _;
-            self.curr_mode.refresh_den = 1000;
-        }
-        self.display.set_display_mode(&self.curr_mode).map_err(DDA_ERR_MAP)?;
-        self.curr_mode = self.display.get_current_display_mode().map_err(DDA_ERR_MAP)?;
+        self.dupl.configure(DuplicationApiOptions { skip_cursor: c.skip_cursor });
         return Ok(());
     }
 }
