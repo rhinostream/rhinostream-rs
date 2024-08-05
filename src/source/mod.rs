@@ -4,7 +4,7 @@ use std::pin::Pin;
 use std::str::FromStr;
 use std::task::Poll;
 
-use clap::Parser;
+use clap::{Parser,ArgAction};
 use futures::{Future, FutureExt, select, Stream};
 use log::{info, warn};
 use tokio::sync::mpsc::{channel, Receiver, Sender};
@@ -78,7 +78,11 @@ pub struct ScreenCapConfig {
     pub resolution: Option<Resolution>,
 
     /// The screen will be captured without cursor.
-    #[arg(long, value_parser)]
+    #[arg(long, action = ArgAction::Set,
+    default_value_t = false,
+    default_missing_value = "true",
+    num_args = 0..=1,
+    require_equals = false)]
     pub skip_cursor: bool,
 }
 
